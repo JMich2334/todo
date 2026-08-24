@@ -75,6 +75,9 @@ h1{font-family:'Instrument Serif',Georgia,serif;font-size:38px;font-weight:400;l
 .evmid{flex:1;min-width:0}
 .evname{font-size:15px;font-weight:500;line-height:1.3;word-break:break-word}
 .evcount{font-size:11.5px;color:#9A9891;margin-top:2px}
+.evrange{font-size:11.5px;color:#9A9891;margin-top:2px}
+.evday.rng{font-size:19px}
+.evnow{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#fff;background:#D14343;border-radius:999px;padding:2px 7px;margin-left:6px;vertical-align:1px}
 .evcount.soon{color:#D14343;font-weight:600}
 .evdel{font-size:16px;color:#D6D3CD;padding:0 3px;flex-shrink:0}
 .evempty{font-size:13px;color:#A9A69F;padding:14px 2px}
@@ -171,6 +174,7 @@ h1{font-family:'Instrument Serif',Georgia,serif;font-size:38px;font-weight:400;l
     <div class="evform" id="evform">
       <input id="evname" placeholder="What is it?" autocomplete="off" />
       <input type="date" id="evdate" />
+      <input type="date" id="evend" />
       <button id="evsave" disabled>Save</button>
     </div>
     <div id="evlist"></div>
@@ -267,13 +271,21 @@ var level = "high";
 var minutes = 30;
 var collapsed = {};
 var editing = null, editText = "", editLevel = "high", editMin = 30;
-var editingEv = null, evText = "", evDate = "";
+var editingEv = null, evText = "", evDate = "", evEnd = "";
 
 try { tasks = JSON.parse(localStorage.getItem(KEY)) || []; } catch (e) { tasks = []; }
 function save(){ try { localStorage.setItem(KEY, JSON.stringify(tasks)); } catch(e){} }
 try { events = JSON.parse(localStorage.getItem(EKEY)) || []; } catch (e) { events = []; }
 function saveEvents(){ try { localStorage.setItem(EKEY, JSON.stringify(events)); } catch(e){} }
 
+function countdownEv(e){
+  var ds = dayDiff(e.due), de = dayDiff(endOf(e));
+  if(ds <= 0 && de >= 0 && isMulti(e)){
+    var n = spanDays(e) - de;
+    return { t:"Day "+n+" of "+spanDays(e), soon:true, now:true };
+  }
+  return countdown(e.due);
+}
 function countdown(due){
   var d = dayDiff(due);
   if(d === 0) return { t:"Today", soon:true };
@@ -284,9 +296,21 @@ function countdown(due){
   return { t:"in "+d+" days", soon:false };
 }
 
+function endOf(e){ return e.end || e.due; }
+function spanDays(e){ return dayDiff(endOf(e)) - dayDiff(e.due) + 1; }
+function isMulti(e){ return e.end && e.end !== e.due; }
+function rangeText(e){
+  var p1 = e.due.split("-"), p2 = endOf(e).split("-");
+  var a = new Date(+p1[0], +p1[1]-1, +p1[2]), b = new Date(+p2[0], +p2[1]-1, +p2[2]);
+  var sameMonth = p1[1] === p2[1] && p1[0] === p2[0];
+  var A = a.toLocaleDateString(undefined,{month:"short",day:"numeric"});
+  var B = sameMonth ? b.getDate() : b.toLocaleDateString(undefined,{month:"short",day:"numeric"});
+  return A+" \u2013 "+B+" \u00B7 "+spanDays(e)+" days";
+}
+
 function renderEvents(){
   var live = events
-    .filter(function(e){ return dayDiff(e.due) >= 0; })
+    .filter(function(e){ return dayDiff(endOf(e)) >= 0; })
     .sort(function(a,b){ return a.due < b.due ? -1 : a.due > b.due ? 1 : 0; });
 
   if(!live.length){
@@ -299,19 +323,23 @@ function renderEvents(){
   live.forEach(function(e){
     var p = e.due.split("-");
     var dt = new Date(+p[0], +p[1]-1, +p[2]);
-    var c = countdown(e.due);
+    var c = countdownEv(e);
     if(editingEv === e.id){
       html += '<div class="evrow" style="display:block"><input class="einput" id="eEvName" value="'+esc(evText)+'" />'+
         '<input class="einput" type="date" id="eEvDate" value="'+evDate+'" />'+
+        '<input class="einput" type="date" id="eEvEnd" value="'+(evEnd||"")+'" />'+
         '<div class="eacts"><button class="ebtn cancel" data-act="evcancel">Cancel</button>'+
         '<button class="ebtn save" data-act="evsave2" data-id="'+e.id+'">Save</button></div></div>';
       return;
     }
     html += '<div class="evrow">'+
       '<span class="evdate"><span class="evmon">'+dt.toLocaleDateString(undefined,{month:"short"})+'</span>'+
-      '<span class="evday">'+dt.getDate()+'</span></span>'+
+      '<span class="evday'+(isMulti(e)?" rng":"")+'">'+
+        (isMulti(e) ? dt.getDate()+"\u2013"+(+endOf(e).split("-")[2]) : dt.getDate())+'</span></span>'+
       '<span class="evmid"><span class="evname" data-act="evedit" data-id="'+e.id+'">'+esc(e.name)+'</span>'+
-      '<span class="evcount'+(c.soon?" soon":"")+'">'+c.t+'</span></span>'+
+      '<span class="evcount'+(c.soon?" soon":"")+'">'+c.t+
+        (c.now ? '<span class="evnow">now</span>' : '')+'</span>'+
+      (isMulti(e) ? '<span class="evrange">'+rangeText(e)+'</span>' : '')+'</span>'+
       '<button class="evdel" data-act="evdel" data-id="'+e.id+'" aria-label="Delete date">\u00D7</button></div>';
   });
   document.getElementById("evlist").innerHTML = html + '</div>';
@@ -663,14 +691,16 @@ document.getElementById("app").addEventListener("click", function(e){
   }
   if(act==="evedit"){
     var e0 = events.filter(function(x){ return x.id===id; })[0];
-    if(e0){ editingEv=id; evText=e0.name; evDate=e0.due; renderEvents(); }
+    if(e0){ editingEv=id; evText=e0.name; evDate=e0.due; evEnd=e0.end||""; renderEvents(); }
     return;
   }
   if(act==="evcancel"){ editingEv=null; renderEvents(); return; }
   if(act==="evsave2"){
-    var n = document.getElementById("eEvName"), d = document.getElementById("eEvDate");
+    var n = document.getElementById("eEvName"), d = document.getElementById("eEvDate"),
+        en = document.getElementById("eEvEnd");
     if(n && n.value.trim() && d && d.value){
-      events.forEach(function(x){ if(x.id===id){ x.name=n.value.trim(); x.due=d.value; } });
+      var ev2 = (en && en.value && en.value > d.value) ? en.value : null;
+      events.forEach(function(x){ if(x.id===id){ x.name=n.value.trim(); x.due=d.value; x.end=ev2; } });
       saveEvents();
     }
     editingEv=null; renderEvents(); return;
@@ -719,8 +749,10 @@ evdate.addEventListener("change", evCheck);
 evname.addEventListener("keydown", function(e){ if(e.key==="Enter" && !evsave.disabled) evsave.click(); });
 
 evsave.addEventListener("click", function(){
-  events.push({ id: Date.now(), name: evname.value.trim(), due: evdate.value });
-  evname.value = ""; evdate.value = ""; evsave.disabled = true;
+  var ee = document.getElementById("evend");
+  var endV = (ee && ee.value && ee.value > evdate.value) ? ee.value : null;
+  events.push({ id: Date.now(), name: evname.value.trim(), due: evdate.value, end: endV });
+  evname.value = ""; evdate.value = ""; if(ee) ee.value = ""; evsave.disabled = true;
   document.getElementById("evform").classList.remove("open");
   document.getElementById("evtoggle").textContent = "+ Add date";
   saveEvents(); renderEvents();
