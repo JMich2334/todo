@@ -544,21 +544,28 @@ Object.keys(chal.log).forEach(function(d){
 });
 function saveChal(){ try { localStorage.setItem(CKEY, JSON.stringify(chal)); } catch(e){} }
 
+function backfillDays(days){
+  var applied = 0;
+  days.forEach(function(n){
+    if(!(n >= 1 && n <= DAYS)) return;
+    var ds = dateForIndex(n - 1);
+    if(dayDiff(ds) > 0) return;                  // never a future day
+    var e = chal.log[ds] || {};
+    HABITS.forEach(function(h){ e[h.id] = true; });
+    e.of = HABITS.length;
+    chal.log[ds] = e;
+    applied++;
+  });
+  if(applied) saveChal();
+  return applied;
+}
+
 // One-time backfill, only via URL: ?backfill=1,2,3,4  (day numbers, 1-based).
 // Deliberately not a button — correcting the record should take effort.
 (function(){
   var m = (location.search || "").match(/[?&]backfill=([0-9,]+)/);
   if(!m) return;
-  var days = m[1].split(",").map(Number).filter(function(n){ return n >= 1 && n <= DAYS; });
-  days.forEach(function(n){
-    var ds = dateForIndex(n - 1);
-    if(dayDiff(ds) > 0) return;                 // never mark a future day
-    var e = chal.log[ds] || {};
-    HABITS.forEach(function(h){ e[h.id] = true; });
-    e.of = HABITS.length;
-    chal.log[ds] = e;
-  });
-  saveChal();
+  backfillDays(m[1].split(",").map(Number));
   if(history && history.replaceState) history.replaceState(null, "", location.pathname);
 })();
 
@@ -595,7 +602,7 @@ function renderChal(){
 
   var h = '<div class="chal"><div class="chalhead" data-act="chalfold">'+
     '<div><div class="chaltitle">60-Day Challenge</div>'+
-    '<div class="chalday">Day <b>'+Math.min(idx+1, DAYS)+'</b> of '+DAYS+'</div></div>'+
+    '<div class="chalday" data-act="chalday">Day <b>'+Math.min(idx+1, DAYS)+'</b> of '+DAYS+'</div></div>'+
     '<div class="chalring"><div class="chalscore">'+score+'<span>/'+HABITS.length+'</span></div>'+
     (st > 1 ? '<div class="chalstreak">'+st+' day streak</div>' : '')+'</div></div>'+
     '<div class="chalbody'+(chalOpen?"":" hide")+'">';
@@ -696,6 +703,22 @@ document.getElementById("app").addEventListener("click", function(e){
   var act = b.getAttribute("data-act"); if(!act) return;
   var id = Number(b.getAttribute("data-id"));
 
+  if(act==="chalday"){
+    var now = Date.now();
+    if(now - (window.__tapT || 0) > 1500) window.__tapN = 0;
+    window.__tapT = now;
+    window.__tapN = (window.__tapN || 0) + 1;
+    if(window.__tapN >= 3){
+      window.__tapN = 0;
+      var ans = prompt("Backfill days you completed but didn't log.\nEnter day numbers, e.g. 1,2,3,4\n\nThis is the only way back \u2014 use it once.");
+      if(ans){
+        var n = backfillDays(ans.split(",").map(function(x){ return parseInt(x.trim(),10); }));
+        renderChal();
+        alert(n ? (n+" day"+(n===1?"":"s")+" marked complete.") : "Nothing changed.");
+      }
+    }
+    return;
+  }
   if(act==="chalfold"){ chalOpen = !chalOpen; renderChal(); return; }
   if(act==="winsopen"){ winsOpen = !winsOpen; renderChal(); return; }
   if(act==="hab"){
